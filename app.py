@@ -6,7 +6,7 @@ import numpy as np
 
 # --- Configuration ---
 EMBEDDING_MODEL = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
-LLM_MODEL = 'google/mt5-small'
+LLM_MODEL = 'google/flan-t5-small'
 
 # !!! EDIT THESE TWO VARIABLES !!!
 FAISS_INDEX_PATH = "km1139171_index.faiss"  # <--- 1. Put your FAISS file name here
