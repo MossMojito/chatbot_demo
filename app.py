@@ -331,8 +331,9 @@ def answer_question(question, top_k=3):
 
     retrieved_docs = [documents[i] for i in indices[0]]
     context = " ".join(retrieved_docs)
-
-    prompt = f"Based on this information: --- {context} --- Answer the question: {question}"
+ 
+    prompt = f"ในฐานะผู้ช่วยบริการลูกค้าของ AIS จงตอบคำถามนี้อย่างสุภาพเป็นประโยคที่สมบูรณ์: '{question}' โดยใช้ข้อมูลนี้เท่านั้น: '{context}'"
+ 
 
     input_ids = llm_tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True).input_ids
     outputs = llm_model.generate(input_ids, max_length=256, num_beams=5, early_stopping=True)
