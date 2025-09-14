@@ -4,12 +4,11 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 import json
 import asyncio
-import httpx # For making API calls
+import httpx
 
 # --- CONFIGURATION ---
 EMBEDDING_MODEL = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
 JSON_FILE_PATH = "KM1139171_clean.json"
-# Use the Gemini Flash model for speed, quality, and its large free tier.
 GEMINI_API_MODEL = "gemini-1.5-flash-latest"
 
 # --- DATA & RETRIEVAL SYSTEM SETUP (Cached for performance) ---
@@ -21,21 +20,9 @@ def load_and_chunk_document(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         fields = data.get("fields", {})
-        parts = []
-        for key, value in fields.items():
-            key_cleaned = key.strip()
-            if isinstance(value, list):
-                # Join list items into a single string
-                value_str = ", ".join(str(v).strip() for v in value if v)
-            else:
-                value_str = str(value).strip()
-            
-            if value_str:
-                parts.append(f"{key_cleaned}: {value_str}")
-        
-        # Split the combined text into chunks
-        full_document_text = "\n".join(parts)
-        chunks = [chunk.strip() for chunk in full_document_text.split('\n') if chunk.strip()]
+        parts = [f"{k.strip()}: {', '.join(v) if isinstance(v, list) else v}" for k, v in fields.items()]
+        text = "\n".join(parts)
+        chunks = [chunk.strip() for chunk in text.split('\n') if chunk.strip()]
         return chunks
     except Exception as e:
         st.error(f"Error loading or parsing {file_path}: {e}")
@@ -73,15 +60,15 @@ async def get_gemini_response(api_key, prompt):
 
 # --- MAIN STREAMLIT APP ---
 async def main():
-    st.title("🤖 Chatbot ข้อมูลโปรโมชั่น (Powered by Gemini API)")
-    st.write("แชทบอทนี้ใช้ข้อมูลจากเอกสารของคุณและตอบคำถามอย่างเป็นธรรมชาติด้วย Gemini API")
+    st.title("🤖 Chatbot ข้อมูลโปรโมชั่น")
+    st.write("แชทบอทที่จดจำการสนทนาได้ ขับเคลื่อนด้วย Gemini API")
 
     # Load data and build the search index in memory
     documents = load_and_chunk_document(JSON_FILE_PATH)
     embedding_model, faiss_index = setup_retrieval_system(documents)
 
-    if not documents or not embedding_model or not faiss_index:
-        st.error("Application failed to initialize. Please check your source files and configuration on GitHub.")
+    if not all([documents, embedding_model, faiss_index]):
+        st.error("Application failed to initialize. Please check files on GitHub.")
         return
 
     # Get the user's API key from the sidebar
@@ -93,35 +80,54 @@ async def main():
             st.stop()
         st.success("API Key ได้รับแล้ว, พร้อมใช้งาน!")
 
-    # Chat interface
-    user_question = st.text_input("คำถามของคุณเกี่ยวกับโปรโมชั่น:")
+    # --- CHAT MEMORY SETUP ---
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-    if st.button("ส่งคำถาม"):
-        if user_question:
+    # Display previous messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # --- CHAT INPUT AND LOGIC ---
+    if user_question := st.chat_input("สอบถามเกี่ยวกับโปรโมชั่นได้เลย..."):
+        # Add user message to chat history
+        st.session_state.messages.append({"role": "user", "content": user_question})
+        with st.chat_message("user"):
+            st.markdown(user_question)
+
+        with st.chat_message("assistant"):
             with st.spinner("กำลังค้นหาข้อมูลและสร้างคำตอบ..."):
                 # 1. Retrieve relevant context using FAISS
                 question_embedding = embedding_model.encode([user_question])
-                _, indices = faiss_index.search(np.array(question_embedding).astype('float32'), k=5)
+                _, indices = faiss_index.search(np.array(question_embedding).astype('float32'), k=3) # Use fewer chunks for more focus
                 context = "\n".join([documents[i] for i in indices[0]])
 
-                # 2. Build the final prompt for the Gemini API
-                prompt = f"""ในฐานะผู้ช่วยบริการลูกค้าของ AIS ที่เป็นมิตรและมีความรู้, จงตอบคำถามต่อไปนี้อย่างสุภาพและเป็นกันเองเป็นภาษาไทยที่สมบูรณ์: "{user_question}"
-                
-                จงใช้ข้อมูลต่อไปนี้ในการตอบเท่านั้น อย่าเพิ่มเติมข้อมูลที่ไม่มีในนี้:
-                ---
+                # 2. Get the last few messages for conversation history
+                chat_history = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages[-5:]])
+
+                # 3. Build a more advanced prompt with persona, instructions, context, and history
+                prompt = f"""You are a friendly and knowledgeable AIS customer service assistant. Your goal is to answer the user's question in a helpful and conversational way, speaking in complete Thai sentences.
+
+                Here is the recent conversation history:
+                <history>
+                {chat_history}
+                </history>
+
+                Here is the most relevant information from your knowledge base to answer the CURRENT user question:
+                <context>
                 {context}
-                ---
+                </context>
+
+                Based on the conversation history and the provided context, answer the user's last message: "{user_question}"
                 """
                 
-                # 3. Get the answer from the Gemini API
+                # 4. Get the answer from the Gemini API
                 answer = await get_gemini_response(api_key, prompt)
-                
-                st.subheader("คำตอบ:")
-                st.write(answer)
-                with st.expander("ข้อมูลที่ใช้ในการตอบ (Context)"):
-                    st.write(context)
-        else:
-            st.warning("กรุณาป้อนคำถาม")
+                st.markdown(answer)
+        
+        # Add assistant response to chat history
+        st.session_state.messages.append({"role": "assistant", "content": answer})
 
 if __name__ == "__main__":
     asyncio.run(main())
